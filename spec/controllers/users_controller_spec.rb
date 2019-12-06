@@ -15,6 +15,9 @@ describe UsersController do
   let(:superadmin) {build(:superadmin)}
   let(:assignment) {build(:assignment, id: 1, name: "test_assignment", instructor_id: 2, 
     participants: [build(:participant, id: 1, user_id: 1, assignment: assignment)], course_id: 1)}
+
+  let(:assignment1) { build(:assignment, id: 2, is_conference: 1, name: "conf_assignment", instructor_id: 2) }
+
   before(:each) do
     stub_current_user(instructor, instructor.role.name, instructor.role)
   end
@@ -229,6 +232,23 @@ describe UsersController do
       post :create, params, session
       expect(response).to render_template(:new)
     end
+
+    it 'save successfully conferense user without the same name' do
+      params = {
+          user: {name: 'testingUser6',
+                 fullname: 'test6, teststudent',
+                 email: 'testemail6@gmail.com',
+                 role_id: 1,
+                 assignment: 2
+          }
+
+      }
+      post :create, params
+      allow(Assignment).to receive(:find).with(2).and_return(assignment1)
+      expect(flash[:success]).to eq "A new password has been sent to new user's e-mail address."
+      expect(response).to redirect_to('http://test.host/')
+    end
+
   end
 
   context "#create_requested_user_record" do

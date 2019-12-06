@@ -13,6 +13,8 @@ class UsersController < ApplicationController
        'Administrator'].include? current_role_name
     when 'request_new'
       true
+    #added new and create method to support user creation
+    # via conference url or by instructor based on valid params & roles
     when 'new'
       is_valid_conference_assignment?
     when 'create'
@@ -245,6 +247,8 @@ class UsersController < ApplicationController
   protected
 
   def foreign
+    #if user creation call is for conference user then only possible role is Student
+    # else  get all the roles types which logged in user can create as new user.
     if params[:assignment_id].nil?
       role = Role.find(session[:user].role_id)
     else
@@ -327,10 +331,7 @@ class UsersController < ApplicationController
     existing_user = User.where('name = ? and email = ?', params[:user][:name], params[:user][:email]).first
     # if user exist then add user as participant to assignment else create account and then add as participant
     if existing_user.nil?
-      #check if user is already present with given username in system
-      check = User.find_by(name: params[:user][:name])
-      params[:user][:name] = params[:user][:email] unless check.nil?
-      @user = User.new(user_params)
+      check_if_username_exists
       # parent id for a conference user will be conference assignment instructor id
       @user.parent_id = Assignment.find(params[:user][:assignment]).instructor.id
       # set the user's timezone to its parent's
@@ -338,10 +339,7 @@ class UsersController < ApplicationController
       # set default value for institute
       @user.institution_id = 1
       if @user.save
-        password = @user.reset_password # the password is reset
-        prepared_mail = MailerHelper.send_mail_to_user(@user, "Your Expertiza account and password have been created.", "user_welcome", password)
-        prepared_mail.deliver
-        flash[:success] = "A new password has been sent to new user's e-mail address."
+        send_mail_to_new_user
       else
         raise "Error occurred while creating expertiza account."
       end
@@ -351,20 +349,14 @@ class UsersController < ApplicationController
   end
 
   def create_normal_user
-    # if the user name already exists, register the user by email address
-    check = User.find_by(name: params[:user][:name])
-    params[:user][:name] = params[:user][:email] unless check.nil?
-    @user = User.new(user_params)
+    check_if_username_exists
     @user.institution_id = params[:user][:institution_id]
     # record the person who created this new user
     @user.parent_id = session[:user].id
     # set the user's timezone to its parent's
     @user.timezonepref = User.find(@user.parent_id).timezonepref
     if @user.save
-      password = @user.reset_password # the password is reset
-      prepared_mail = MailerHelper.send_mail_to_user(@user, "Your Expertiza account and password have been created.", "user_welcome", password)
-      prepared_mail.deliver
-      flash[:success] = "A new password has been sent to new user's e-mail address."
+      send_mail_to_new_user
       # Instructor and Administrator users need to have a default set for their notifications
       # the creation of an AssignmentQuestionnaire object with only the User ID field populated
       # ensures that these users have a default value of 15% for notifications.
@@ -379,6 +371,21 @@ class UsersController < ApplicationController
     end
   end
 
+  #method to send email to new user with detaiils regarding username and password
+  def send_mail_to_new_user
+    password = @user.reset_password # the password is reset
+    prepared_mail = MailerHelper.send_mail_to_user(@user, "Your Expertiza account and password have been created.", "user_welcome", password)
+    prepared_mail.deliver
+    flash[:success] = "A new password has been sent to new user's e-mail address."
+  end
+
+  def check_if_username_exists
+    # if the user name already exists, register the user by email address in case username exists
+    check = User.find_by(name: params[:user][:name])
+    params[:user][:name] = params[:user][:email] unless check.nil?
+    @user = User.new(user_params)
+  end
+
   def add_conference_user_as_participant
     @participant = AssignmentParticipant.where('user_id = ? and parent_id = ?', @user.id, params[:user][:assignment]).first
     if @participant.nil?
@@ -390,11 +397,14 @@ class UsersController < ApplicationController
       )
       participant.set_handle
     end
-    flash[:success] = "You are added as an Author for assignment."
+    assignment = Assignment.find(params[:user][:assignment])
+    flash[:success] = "You are added as an Author for assignment " + assignment.name
     redirect_to get_redirect_url_link
   end
 
   def get_redirect_url_link
+    #if conference user is already logged in the redirect to Student_task list page
+    # else redirect to login page.
     if current_user && current_role_name == "Student"
       return '/student_task/list'
     else
@@ -403,6 +413,7 @@ class UsersController < ApplicationController
   end
 
   def is_valid_conference_assignment?
+    #if assignment id is present in url the check if it's a valid conference assignment.
     if !params[:assignment_id].nil?
       @assignment = Assignment.find_by_id(params[:assignment_id])
       if !@assignment.nil? and @assignment.is_conference
